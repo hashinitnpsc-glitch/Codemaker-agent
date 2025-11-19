@@ -1,4 +1,3 @@
-```yaml
 name: Codemaker Agent
 
 on:
@@ -22,4 +21,3 @@ jobs:
               ...context.issue,
               body: `### Your code:\n${codeSnippet}\n\n### Explanation:\n${explanation}\n\n### Simulated run:\n${simulatedRun}`
             })
-```
