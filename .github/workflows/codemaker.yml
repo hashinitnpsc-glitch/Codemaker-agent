@@ -11,7 +11,8 @@ jobs:
   codemaking:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - name: Write, explain, and run code (simulate run)
+        uses: actions/github-script@v7
         with:
           script: |
             const issueBody = context.payload.issue.body
@@ -19,6 +20,11 @@ jobs:
             let explanation = "This code prints a welcome message."
             let simulatedRun = "`Output:`\nHello, Codemaker!"
             github.rest.issues.createComment({
-              ...context.issue,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
               body: `### Your code:\n${codeSnippet}\n\n### Explanation:\n${explanation}\n\n### Simulated run:\n${simulatedRun}`
             })
+    
+      
+          
