@@ -11,20 +11,57 @@ jobs:
   codemaking:
     runs-on: ubuntu-latest
     steps:
-      - name: Write, explain, and run code (simulate run)
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |
-            const issueBody = context.payload.issue.body
-            let codeSnippet = `\`\`\`python\nprint('Hello, Codemaker!')\n\`\`\``
-            let explanation = "This code prints a welcome message."
-            let simulatedRun = "`Output:`\nHello, Codemaker!"
+            const issueBody = context.payload.issue.body.toLowerCase();
+            let codeSnippet = '';
+            let explanation = '';
+            let simulatedRun = '';
+
+            if (issueBody.includes('c++') && issueBody.includes('sum') && issueBody.includes('array')) {
+              codeSnippet = `\`\`\`cpp
+#include <iostream>
+using namespace std;
+
+int main() {
+    int arr[] = {1, 2, 3, 4, 5};
+    int sum = 0;
+    for(int i = 0; i < 5; ++i) {
+        sum += arr[i];
+    }
+    cout << "Sum: " << sum << endl;
+    return 0;
+}
+\`\`\``;
+              explanation = "This C++ program creates an array of integers, iterates through each element using a for loop, adds each value to the sum variable, then prints out the sum. 'arr' stores the numbers, 'sum' keeps track of the total as we add each number, and 'cout' prints the result.";
+              simulatedRun = "`Output:`\nSum: 15";
+            } else if (issueBody.includes('python') && issueBody.includes('hello world')) {
+              codeSnippet = `\`\`\`python
+print('Hello, World!')
+\`\`\``;
+              explanation = "This Python program prints the greeting 'Hello, World!' to the console.";
+              simulatedRun = "`Output:`\nHello, World!";
+            } else if (issueBody.includes('javascript') && issueBody.includes('reverse') && issueBody.includes('string')) {
+              codeSnippet = `\`\`\`javascript
+function reverseString(str) {
+  return str.split('').reverse().join('');
+}
+console.log(reverseString('example'));
+\`\`\``;
+              explanation = "This JavaScript function splits the string into an array of characters, reverses the array, then joins it back together to get the reversed string. For example, 'example' becomes 'elpmaxe'.";
+              simulatedRun = "`Output:`\nelpmaxe";
+            } else {
+              codeSnippet = `\`\`\`python
+print('Hello, Codemaker!')
+\`\`\``;
+              explanation = "This code prints a welcome message.";
+              simulatedRun = "`Output:`\nHello, Codemaker!";
+            }
+
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: `### Your code:\n${codeSnippet}\n\n### Explanation:\n${explanation}\n\n### Simulated run:\n${simulatedRun}`
-            })
-    
-      
-          
+            });
