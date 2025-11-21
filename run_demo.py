@@ -4,32 +4,37 @@ import json
 from typing import Any, Dict
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL = "models/gemini-2.5-flash"   # chosen model from your list
-METHOD = "generateContent"          # supported generation method
+MODEL = "models/gemini-2.5-flash"   # model you have available
+METHOD = "generateContent"
 
 URL = f"https://generativelanguage.googleapis.com/v1/{MODEL}:{METHOD}"
 
 def model_call(prompt: str) -> str:
     if not API_KEY:
-        return "ERROR: GEMINI_API_KEY not set. Export it (export GEMINI_API_KEY=...) and retry."
+        return "ERROR: GEMINI_API_KEY not set. Export it and retry."
 
-    # Payload format for generateContent (matches your ListModels supportedGenerationMethods)
+    # Correct payload: contents + generationConfig (place parameters here)
     payload: Dict[str, Any] = {
         "contents": [
             {"parts": [{"text": prompt}]}
         ],
-        # Optional: tuning parameters you can adjust
-        "temperature": 0.2,
-        "maxOutputTokens": 512
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 512
+        }
     }
 
     try:
-        resp = requests.post(f"{URL}?key={API_KEY}", headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+        resp = requests.post(
+            f"{URL}?key={API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=30
+        )
     except requests.RequestException as e:
         return f"Network/Error making request: {e}"
 
     if resp.status_code != 200:
-        # Attempt to pretty-print JSON error if available
         try:
             return "API Error: " + json.dumps(resp.json(), indent=2)
         except Exception:
@@ -40,11 +45,9 @@ def model_call(prompt: str) -> str:
     except Exception:
         return "API Error: response not JSON: " + resp.text
 
-    # Most likely place for the generated text given generateContent
     try:
         return j["candidates"][0]["content"]["parts"][0]["text"]
     except Exception:
-        # Fallback: return the whole JSON for debugging
         return "Unexpected response shape:\n" + json.dumps(j, indent=2)
 
 def run_demo():
@@ -64,3 +67,4 @@ if __name__ == "__main__":
     print("Running Codemaker Agent Demo...")
     print("(Make sure GEMINI_API_KEY is exported in this shell.)\n")
     run_demo()
+
