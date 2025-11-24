@@ -101,11 +101,43 @@ if GEMINI_KEY:
                 print("Model response not JSON:", resp.text)
                 model_text = None
             else:
-                try:
-                    model_text = j["candidates"][0]["content"]["parts"][0].get("text")
-                except Exception:
-                    model_text = "Model returned unexpected shape. Raw:\n" + json.dumps(j, indent=2)
+               model_text = None
+try:
+    # Normal expected path
+    parts = j["candidates"][0]["content"].get("parts", [])
+    if parts and "text" in parts[0]:
+        model_text = parts[0]["text"]
+    else:
+        # Fallback: search anywhere for text
+        def extract_text(obj):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k == "text" and isinstance(v, str):
+                        return v
+                    res = extract_text(v)
+                    if res:
+                        return res
+            elif isinstance(obj, list):
+                for item in obj:
+                    res = extract_text(item)
+                    if res:
+                        return res
+            return None
 
+        extracted = extract_text(j)
+        if extracted:
+            model_text = extracted
+
+except Exception:
+    model_text = None
+
+# If STILL nothing, use fallback
+if not model_text:
+    model_text = (
+        "The model returned an incomplete response (MAX_TOKENS).\n"
+        "Try shortening the issue or ask again.\n\n"
+        "Raw data:\n" + json.dumps(j, indent=2)
+    )
 if model_text:
     comment_body = f"Hello — I am Codemaker Agent. Here is my suggestion:\n\n{model_text}"
 else:
