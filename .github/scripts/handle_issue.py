@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # handle_issue.py
-# GitHub Issue -> Gemini handler for Codemaker Agent
-# Robust version (no open triple-quotes), safe extraction and posting.
+# Robust GitHub Issue -> Gemini handler for Codemaker Agent
+# - safer model config (larger max tokens)
+# - robust extraction (search JSON for "text")
+# - friendly fallback when model stops early
 
 import os
 import json
 import sys
 import requests
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -20,19 +22,18 @@ def fail(msg: str):
     sys.exit(1)
 
 
+# Basic environment checks
 if not GITHUB_EVENT_PATH:
     fail("GITHUB_EVENT_PATH is not set.")
-
 if not GITHUB_REPO:
     fail("GITHUB_REPOSITORY is not set.")
-
 if not GITHUB_TOKEN:
-    fail("GITHUB_TOKEN is not set. The workflow must provide it.")
-
+    fail("GITHUB_TOKEN is not set.")
 if not GEMINI_KEY:
-    print("Warning: GEMINI_API_KEY not set. Model response will fail.")
+    print("Warning: GEMINI_API_KEY not set. Model calls will be skipped and fallback posted.")
 
 
+# Load event payload
 try:
     with open(GITHUB_EVENT_PATH, "r", encoding="utf-8") as f:
         event = json.load(f)
@@ -54,26 +55,27 @@ if sender_type == "Bot" or sender_login.endswith("[bot]"):
 issue_number = issue.get("number")
 issue_title = issue.get("title", "")
 issue_body = issue.get("body", "")
-
 if not issue_number:
     fail("Issue number missing in payload.")
 
-
+# Build prompt
 prompt = (
-    "You are Codemaker Agent.\n"
-    "Respond to the GitHub issue below.\n\n"
+    "You are Codemaker Agent, a concise helpful developer assistant.\n"
+    "Answer the GitHub issue below. If code is helpful, include a fenced code block.\n\n"
     f"Issue title: {issue_title}\n"
     f"Issue body: {issue_body}\n"
 )
 
-model_text = None
+model_text: Optional[str] = None
+model_raw: Optional[Dict[str, Any]] = None
 
 if GEMINI_KEY:
     MODEL = "models/gemini-2.5-flash"
     URL = f"https://generativelanguage.googleapis.com/v1/{MODEL}:generateContent"
+    # Increase max tokens to reduce MAX_TOKENS early stops
     payload: Dict[str, Any] = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512}
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024}
     }
 
     try:
@@ -81,72 +83,77 @@ if GEMINI_KEY:
             f"{URL}?key={GEMINI_KEY}",
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout=60
         )
     except Exception as e:
-        print("Model call failed:", e)
-        model_text = None
+        print("Model call failed (network):", e)
     else:
-        if resp.status_code != 200:
-            print("Model API returned non-200 status:", resp.status_code)
-            try:
-                print(resp.json())
-            except Exception:
-                print(resp.text)
-            model_text = None
-        else:
-            try:
-                j = resp.json()
-            except Exception:
-                print("Model response not JSON:", resp.text)
-                model_text = None
-            else:
-               model_text = None
-try:
-    # Normal expected path
-    parts = j["candidates"][0]["content"].get("parts", [])
-    if parts and "text" in parts[0]:
-        model_text = parts[0]["text"]
-    else:
-        # Fallback: search anywhere for text
-        def extract_text(obj):
+        try:
+            j = resp.json()
+            model_raw = j
+        except Exception:
+            print("Model response not JSON:", resp.text)
+            j = None
+
+        # Robust extraction: try normal path, then search for any "text" in response
+        def safe_extract_text(obj: Any) -> Optional[str]:
+            if obj is None:
+                return None
             if isinstance(obj, dict):
+                # Preferred: candidates -> content -> parts -> text
+                if "candidates" in obj:
+                    try:
+                        cands = obj.get("candidates", [])
+                        if cands and isinstance(cands, list):
+                            first = cands[0]
+                            # many shapes: first.content.parts[0].text OR first.content.parts may be dict/list
+                            content = first.get("content", {})
+                            parts = content.get("parts") if isinstance(content, dict) else None
+                            if parts and isinstance(parts, list) and len(parts) > 0:
+                                p0 = parts[0]
+                                if isinstance(p0, dict) and "text" in p0:
+                                    return p0.get("text")
+                # Generic search
                 for k, v in obj.items():
                     if k == "text" and isinstance(v, str):
                         return v
-                    res = extract_text(v)
+                    res = safe_extract_text(v)
                     if res:
                         return res
             elif isinstance(obj, list):
                 for item in obj:
-                    res = extract_text(item)
+                    res = safe_extract_text(item)
                     if res:
                         return res
             return None
 
-        extracted = extract_text(j)
-        if extracted:
-            model_text = extracted
+        if model_raw is not None:
+            model_text = safe_extract_text(model_raw)
 
-except Exception:
-    model_text = None
-
-# If STILL nothing, use fallback
-if not model_text:
-    model_text = (
-        "The model returned an incomplete response (MAX_TOKENS).\n"
-        "Try shortening the issue or ask again.\n\n"
-        "Raw data:\n" + json.dumps(j, indent=2)
-    )
+# Build comment body
 if model_text:
-    comment_body = f"Hello — I am Codemaker Agent. Here is my suggestion:\n\n{model_text}"
+    comment_body = f"Hello — Codemaker Agent here.\n\n{model_text}"
 else:
+    # If model didn't produce usable text, include a helpful fallback explanation and a short raw excerpt
+    raw_excerpt = ""
+    try:
+        if model_raw is not None:
+            # include only first ~400 characters of the JSON to avoid too large comments
+            raw_excerpt = json.dumps(model_raw, indent=2)[:400]
+    except Exception:
+        raw_excerpt = ""
+
     comment_body = (
-        "Hello — I am Codemaker Agent. I could not produce a model response at this time.\n\n"
-        "Possible reasons: missing/invalid GEMINI_API_KEY, model API error, or temporary network issue.\n\n"
-        "You can try again, or paste a short prompt here (e.g., 'Generate a Python function to reverse a string')."
+        "Hello — Codemaker Agent.\n\n"
+        "I could not produce a full model response. This can happen when the model reached its token limit or returned an unexpected response shape.\n\n"
+        "What you can try:\n"
+        "- Shorten the issue text or ask a more specific question.\n"
+        "- If you want a longer answer, ask for a shorter, focused example.\n\n"
+        f"Model debug excerpt:\n```\n{raw_excerpt}\n```\n"
+        "If you expect this to work and it still fails, ask me to retry or share a shorter prompt."
     )
 
+# Post comment
 comments_url = f"https://api.github.com/repos/{GITHUB_REPO}/issues/{issue_number}/comments"
 headers = {
     "Authorization": f"token {GITHUB_TOKEN}",
@@ -159,7 +166,7 @@ try:
 except Exception as e:
     print("Failed to post comment:", e)
     try:
-        print("Response text:", post_resp.text)
+        print("Response:", post_resp.text)
     except Exception:
         pass
     sys.exit(1)
